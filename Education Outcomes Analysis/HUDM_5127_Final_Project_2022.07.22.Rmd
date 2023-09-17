@@ -1,0 +1,388 @@
+---
+title: "A Multilevel Approach to Interpreting Undergraduate Graduation Outcomes Based on Parental Exposure to Higher Education"
+author: "Alexander Dymovsky"
+date: "2022-07-22"
+output: html_document
+bibliography: references.bib
+link-citations: yes
+csl: nature.csl
+---
+
+```{r setup, warning=FALSE, error=FALSE, message=FALSE}
+library(dplyr)
+library(kableExtra)
+library(devtools)
+library(rethinking)
+```
+
+## Abstract
+
+The following is an analysis of undergraduate graduation outcomes based on a student's pre-existing relationship to higher education. Within the context of this project, a "pre-existing relationship to higher education" is the degree of a parent's exposure to higher education. The goal of this analysis is to determine whether a parent's exposure to higher education has a statistically significant impact on a student's likelihood of graduating or dropping out of their studies. This project evaluates data from a higher education institution[@realinho] [@martins2021] to determine if, and how, different degrees of parental exposure to higher education inform graduation and dropout rates for students. This project examines the treatment effect of parental exposure within a basic logistic regression, and then expands on that premise by using a multilevel model that contains fixed effects of gender and random effects of nationality and academic concentration in addition to the treatment.
+
+## The Data
+
+This dataset is from a higher education institution with each row entry representing a given student. There are 4424 observations with 37 total features. Each observation refers to presumably one unique student. Each feature denotes a parameter regarding a given student, such as, but not limited to, their marital status, their graduation status, their given academic concentration, and their parents' exposure to higher education. For the purposes of this project, we are interested exclusively in the following parameters: graduation status, gender, nationality, academic concentration, and parental exposure to higher education. The final parameter is the backbone of much of this analysis. The other parameters are straightforward, and receive due explication below. The data contains two parameters regarding parental exposure to higher education: "Mother's qualification" and "Father's qualification."
+
+## Assumptions and Preprocessing
+
+The goal of this research is to investigate if there is a statistically significant relationship between parental higher education exposure and a student's chances of graduating from their intended program. Our research question is as follows: do a student's chances of graduating from their program of choice change based on whether their parents engaged with higher education? The original data contains three conditions denoting graduation status (the "Target" parameter): "Dropout", "Graduate", and "Enrolled." For obvious reasons any observation with an "Enrolled" status was removed from the analysis. The remaining values, "Graduate" and "Dropout", are binary categorical variables. Graduation status is our response variable for the entirety of our research.
+
+```{r}
+finalprojectdata <- read.csv("Dropout_Academic Success - Sheet1.csv")
+finalprojectonlydropsandgrads <- subset(finalprojectdata, Target!="Enrolled")
+finalprojectonlydropsandgrads$gradindicator <- ifelse(finalprojectonlydropsandgrads$Target == "Graduate", 1,0)
+finalprojectonlydropsandgrads$gradindicator <- as.integer(finalprojectonlydropsandgrads$gradindicator)
+finalprojectonlydropsandgradsnounknown <- finalprojectonlydropsandgrads[!(finalprojectonlydropsandgrads$Mother.s.qualification == "34"),]
+finalprojectonlydropsandgradsnounknown2 <- finalprojectonlydropsandgradsnounknown[!(finalprojectonlydropsandgradsnounknown$Father.s.qualification == "34"),]
+finalprojectonlydropsandgradsnounknown2$mothercat <- ifelse(finalprojectonlydropsandgradsnounknown2$Mother.s.qualification %in% c(2,3,4,5,6,40,43,44),1,0)
+finalprojectonlydropsandgradsnounknown2$fathercat <- ifelse(finalprojectonlydropsandgradsnounknown2$Father.s.qualification %in% c(2,3,4,5,6,40,43,44),1,0)
+finalprojectonlydropsandgradsnounknown2$ID <- seq.int(nrow(finalprojectonlydropsandgradsnounknown2))
+finalprojectonlydropsandgradsnounknown2$treatment <- 1 + finalprojectonlydropsandgradsnounknown2$mothercat + 2*finalprojectonlydropsandgradsnounknown2$fathercat
+finalprojectonlydropsandgradsnounknown3 <- subset(finalprojectonlydropsandgradsnounknown2, !Nacionality %in% c(13, 14, 17, 21, 25, 62, 105, 109))
+finalprojectonlydropsandgradsnounknown3$Gender <- ifelse(finalprojectonlydropsandgradsnounknown3$Gender == "1", 2,1)
+```
+
+Our remaining parameters of interest are nationality, gender, academic concentration, and parental exposure to education. Any nationality with only one corresponding observation was removed from the analysis. Gender is a binary categorical variable. All remaining observations received sequential coding such that their parameters would be compatible with the computation function at hand (e.g. each of the 17 unique "Course" values received a value from 1 to 17).
+
+```{r}
+finalprojectonlydropsandgradsnounknown3["Nacionality"][finalprojectonlydropsandgradsnounknown3["Nacionality"] == 6] <- 3
+finalprojectonlydropsandgradsnounknown3["Nacionality"][finalprojectonlydropsandgradsnounknown3["Nacionality"] == 11] <- 4
+finalprojectonlydropsandgradsnounknown3["Nacionality"][finalprojectonlydropsandgradsnounknown3["Nacionality"] == 22] <- 5
+finalprojectonlydropsandgradsnounknown3["Nacionality"][finalprojectonlydropsandgradsnounknown3["Nacionality"] == 24] <- 6
+finalprojectonlydropsandgradsnounknown3["Nacionality"][finalprojectonlydropsandgradsnounknown3["Nacionality"] == 26] <- 7
+finalprojectonlydropsandgradsnounknown3["Nacionality"][finalprojectonlydropsandgradsnounknown3["Nacionality"] == 41] <- 8
+finalprojectonlydropsandgradsnounknown3["Nacionality"][finalprojectonlydropsandgradsnounknown3["Nacionality"] == 100] <- 9
+finalprojectonlydropsandgradsnounknown3["Nacionality"][finalprojectonlydropsandgradsnounknown3["Nacionality"] == 101] <- 10
+finalprojectonlydropsandgradsnounknown3["Nacionality"][finalprojectonlydropsandgradsnounknown3["Nacionality"] == 103] <- 11
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 33] <- 1
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 171] <- 2
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 8014] <- 3
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9003] <- 4
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9070] <- 5
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9085] <- 6
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9119] <- 7
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9130] <- 8
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9147] <- 9
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9238] <- 10
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9254] <- 11
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9500] <- 12
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9556] <- 13
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9670] <- 14
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9773] <- 15
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9853] <- 16
+finalprojectonlydropsandgradsnounknown3["Course"][finalprojectonlydropsandgradsnounknown3["Course"] == 9991] <- 17
+```
+
+Parental exposure to education referred to two parameters. Both "Mother's qualification" and "Father's qualification" received a treatment computation. Any observation that contained an "unknown" value for either parameter was not included in the analysis. The treatment values ranged from "1" to "4", with "1" indicating that neither parent had any exposure to higher education and "4" indicating that both parents had exposure to higher education. "Exposure to higher education" refers broadly to most levels of degree attainment (bachelor, master, and doctorate) as well as consumption of higher education coursework without a culminating credential.
+
+```{r}
+final_list <- list(
+    gradordrop = finalprojectonlydropsandgradsnounknown3$gradindicator,
+    major = finalprojectonlydropsandgradsnounknown3$Course,
+    uniqueid = finalprojectonlydropsandgradsnounknown3$ID,
+    gender = finalprojectonlydropsandgradsnounknown3$Gender,
+    nationality = finalprojectonlydropsandgradsnounknown3$Nacionality,
+    treatment = as.integer(finalprojectonlydropsandgradsnounknown3$treatment) )
+```
+
+```{r,echo=FALSE}
+text_tbl <- data.frame(
+  Parameter = c("Gradordrop", "Major", "Uniqueid", "Gender", "Nationality", "Treatment"),
+  Description = c(
+    "Binary value denoting graduation or dropping out of a program. Custom value created based on available data. Not included in original dataset.",
+    "Refers to original “Course” parameter within dataset. Denoted as “Course” but described as “undergraduate degree.” Appears to denote the equivalent of a major or concentration.", 
+    "Custom value denoting every single row entry. Not included in original dataset.",
+    "Binary value denoting student gender. Included in original dataset. Adjusted to numerical sequence containing “1” and “2” to accommodate logic for computation function.",
+    "Refers to original “Nacionality” parameter within dataset. Country of origin for each observation.",
+    "Refers to original “Mother’s qualification” and “Father’s qualification” parameters within dataset. Each parameter converted into binary – any exposure to higher education or none."
+  ),
+  Values = c("0 – Dropout, 1 - Graduate", "Original course coding translated to consecutive numerical list.
+
+33 – Biofuel Production Technologies $\\rightarrow$ 1  
+171 – Animation and Multimedia Design $\\rightarrow$ 2
+
+Full list available on website.",
+  "1-	Row 1  
+   2-	Row 2
+
+Continues until final observation.",
+  "1 – Female  
+   2 – Male",
+  "Original country coding translated to consecutive numerical list.
+
+6 – Spanish $\\rightarrow$ 3
+
+Full list available on website.", "1 – Neither parent received higher education exposure  
+2 – Mother exposed to higher education but not father  
+3 – Father exposed to higher education but not mother  
+4 – Both mother and father exposed to higher education")
+  )
+
+kbl(text_tbl) %>%
+  kable_paper(full_width = F) %>%
+  column_spec(1, bold = T, border_right = T) %>%
+  column_spec(2, width = "30em", border_right = T )
+```
+
+## Modeling
+
+Strictly speaking, a simple logistic regression with a parameter denoting the specified treatment effect addresses the research question at the heart of this project. However, it affords no insight relative to the nuance in this particular student population. The dataset affords 37 features that speak to the nuances in the student population. It is useful to understand how, in the aggregate, parental exposure to higher education impacts how likely a student is to graduate, but it affords no insight into how this effect plays out relative to different factors within student populations. There are many ways to define a student population: by their gender, their academic focus, their country of origin, or any other number of factors. Therefore, a multilevel model with fixed and random effects (including treatment) will serve as the primary analytical backbone of this assignment. Each set of models received two approaches to their priors. The model 1 series assume normally distributed parameters with flat priors. The model 2 series assume normally distributed parameters with an adaptive random effect whose mean is normally distributed and whose standard deviation is exponentially distributed (the "simple" variant has a normally distributed standard deviation for its adaptive prior).
+
+```{r, echo=FALSE}
+text_tbl <- data.frame(
+  Model = c("Logistic regression  
+  Model names: simplefinalmodel1, simplefinalmodel2
+", 
+  "Multilevel  
+  Model names: completefinalmodel1, completefinalmodel2, completefinalmodel1N, completefinalmodel2N
+"),
+  Description = c(
+    "Basic logistic regression with single parameter for treatment effect regressed against graduation status.",
+    "Two sets of multilevel models with both fixed and random effects. Fixed effects remain constant, but each model has a different random effect:
+
+Fixed effects: treatment and gender.
+
+Multilevel model 1: academic major as a random effect.
+
+Multilevel model 2: nationality as a random effect (models 1N and 2N)."
+  ),
+  Priors = c("Model 1: Set normally distributed simple prior.
+Model 2: Normally distributed adaptive prior with normally distributed mean and standard deviation
+",
+  "Both models 1 and 2 alternate between a set normally distributed simple prior and normally distributed adaptive priors with normally distributed means and exponential standard deviations.")
+)
+
+kbl(text_tbl) %>%
+  kable_paper(full_width = F) %>%
+  column_spec(1, bold = T, border_right = T) %>%
+  column_spec(2, width = "30em", border_right = T )
+```
+
+## Logistic Regression and Diagnostics
+
+```{r, results='hide', warning=FALSE, error=FALSE, message=FALSE}
+# simple logistic regression with treatment parameter and defined prior
+simplefinalmodel1 <- ulam(
+    alist(
+        gradordrop ~ dbinom( 1 , p ) ,
+        logit(p) <- b[treatment] ,
+        b[treatment] ~ dnorm( 0 , 0.5 )
+    ) , data=final_list , chains=4 , cores=4 , log_lik=TRUE )
+```
+
+```{r}
+precis(simplefinalmodel1, depth = 2)
+```
+
+```{r, results='hide', warning=FALSE, error=FALSE, message=FALSE}
+# simple logistic regression with treatment parameter and defined prior for traceplot
+nologsimplefinalmodel1 <- ulam(
+    alist(
+        gradordrop ~ dbinom( 1 , p ) ,
+        logit(p) <- b[treatment] ,
+        b[treatment] ~ dnorm( 0 , 0.5 )
+    ) , data=final_list , chains=4 , cores=4)
+```
+
+```{r}
+traceplot(nologsimplefinalmodel1)
+```
+
+```{r, results='hide', warning=FALSE, error=FALSE, message=FALSE}
+# simple logistic regression with treatment parameter and adaptive prior
+simplefinalmodel2 <- ulam(
+    alist(
+        gradordrop ~ dbinom( 1 , p ) ,
+        logit(p) <- b[treatment] ,
+        b[treatment] ~ dnorm( alpha , sigma ),
+        alpha ~ dnorm(0,0.5),
+        sigma ~ dnorm(0,0.5)
+    ) , data=final_list , chains=4 , cores=4 , log_lik=TRUE )
+```
+
+```{r}
+precis(simplefinalmodel2, depth = 2)
+```
+
+```{r, results='hide', warning=FALSE, error=FALSE, message=FALSE}
+# simple logistic regression with treatment parameter and adaptive prior for traceplot
+nologsimplefinalmodel2 <- ulam(
+    alist(
+        gradordrop ~ dbinom( 1 , p ) ,
+        logit(p) <- b[treatment] ,
+        b[treatment] ~ dnorm( alpha , sigma ),
+        alpha ~ dnorm(0,0.5),
+        sigma ~ dnorm(0,0.5)
+    ) , data=final_list , chains=4 , cores=4)
+```
+
+```{r}
+traceplot(nologsimplefinalmodel2)
+```
+
+## Multilevel Model Results and Diagnostics  
+
+### Random Effect: Major  
+
+```{r, results='hide', warning=FALSE, error=FALSE, message=FALSE}
+# multilevel model with random effect of major and fixed effects of treatment and gender with defined prior
+completefinalmodel1 <- ulam(
+    alist(
+        gradordrop ~ dbinom( 1 , p ) ,
+        logit(p) <- a[major] + b[treatment] + c[gender] ,
+        b[treatment] ~ dnorm( 0 , 0.5 ),
+        c[gender] ~ dnorm( 0, 0.5),
+        a[major] ~ dnorm( 0 , 0.5 )
+    ) , data=final_list , chains=4 , cores=4 , log_lik=TRUE )
+```
+
+```{r}
+precis(completefinalmodel1, depth = 2)
+```
+
+```{r, results='hide', warning=FALSE, error=FALSE, message=FALSE}
+# multilevel model with random effect of major and fixed effects of treatment and gender with defined prior for traceplot
+nologcompletefinalmodel1 <- ulam(
+    alist(
+        gradordrop ~ dbinom( 1 , p ) ,
+        logit(p) <- a[major] + b[treatment] + c[gender] ,
+        b[treatment] ~ dnorm( 0 , 0.5 ),
+        c[gender] ~ dnorm( 0, 0.5),
+        a[major] ~ dnorm( 0 , 0.5 )
+    ) , data=final_list , chains=4 , cores=4)
+```
+
+```{r}
+traceplot(nologcompletefinalmodel1)
+```
+
+```{r, results='hide', warning=FALSE, error=FALSE, message=FALSE}
+# multilevel model with random effect of major and fixed effects of treatment and gender with adaptive prior
+completefinalmodel2 <- ulam(
+    alist(
+        gradordrop ~ dbinom( 1 , p ) ,
+        logit(p) <- a[major] + b[treatment] + c[gender] ,
+        b[treatment] ~ dnorm( 0 , 0.5 ),
+        c[gender] ~ dnorm( 0, 0.5),
+        a[major] ~ dnorm( a_bar , sigma_a ),
+        a_bar ~ dnorm( 0 , 1.5 ),
+        sigma_a ~ dexp(1)
+    ) , data=final_list , chains=4 , cores=4 , log_lik=TRUE )
+```
+
+```{r}
+precis(completefinalmodel2, depth = 2)
+```
+
+```{r, results='hide', warning=FALSE, error=FALSE, message=FALSE}
+# multilevel model with random effect of major and fixed effects of treatment and gender with adaptive prior for traceplot
+nologcompletefinalmodel2 <- ulam(
+    alist(
+        gradordrop ~ dbinom( 1 , p ) ,
+        logit(p) <- a[major] + b[treatment] + c[gender] ,
+        b[treatment] ~ dnorm( 0 , 0.5 ),
+        c[gender] ~ dnorm( 0, 0.5),
+        a[major] ~ dnorm( a_bar , sigma_a ),
+        a_bar ~ dnorm( 0 , 1.5 ),
+        sigma_a ~ dexp(1)
+    ) , data=final_list , chains=4 , cores=4)
+```
+
+```{r}
+traceplot(nologcompletefinalmodel2)
+```
+
+### Random Effect: Nationality  
+
+```{r, results='hide', warning=FALSE, error=FALSE, message=FALSE}
+# multilevel model with random effect of nationality and fixed effects of treatment and gender with defined prior
+completefinalmodel1N <- ulam(
+    alist(
+        gradordrop ~ dbinom( 1 , p ) ,
+        logit(p) <- a[nationality] + b[treatment] + c[gender] ,
+        b[treatment] ~ dnorm( 0 , 0.5 ),
+        c[gender] ~ dnorm( 0, 0.5),
+        a[nationality] ~ dnorm( 0 , 0.5 )
+    ) , data=final_list , chains=4 , cores=4 , log_lik=TRUE )
+```
+
+```{r}
+precis(completefinalmodel1N, depth = 2)
+```
+
+```{r, results='hide', warning=FALSE, error=FALSE, message=FALSE}
+# multilevel model with random effect of nationality and fixed effects of treatment and gender with defined prior for traceplot
+nologcompletefinalmodel1N <- ulam(
+    alist(
+        gradordrop ~ dbinom( 1 , p ) ,
+        logit(p) <- a[nationality] + b[treatment] + c[gender] ,
+        b[treatment] ~ dnorm( 0 , 0.5 ),
+        c[gender] ~ dnorm( 0, 0.5),
+        a[nationality] ~ dnorm( 0 , 0.5 )
+    ) , data=final_list , chains=4 , cores=4)
+```
+
+```{r}
+traceplot(nologcompletefinalmodel1N)
+```
+
+```{r, results='hide', warning=FALSE, error=FALSE, message=FALSE}
+# multilevel model with random effect of nationality and fixed effects of treatment and gender with adaptive prior
+completefinalmodel2N <- ulam(
+    alist(
+        gradordrop ~ dbinom( 1 , p ) ,
+        logit(p) <- a[nationality] + b[treatment] + c[gender] ,
+        b[treatment] ~ dnorm( 0 , 0.5 ),
+        c[gender] ~ dnorm( 0, 0.5),
+        a[nationality] ~ dnorm( a_bar , sigma_a ),
+        a_bar ~ dnorm( 0 , 1.5 ),
+        sigma_a ~ dexp(1)
+    ) , data=final_list , chains=4 , cores=4 , log_lik=TRUE )
+```
+
+```{r}
+precis(completefinalmodel2N, depth = 2)
+```
+
+```{r, results='hide', warning=FALSE, error=FALSE, message=FALSE}
+# multilevel model with random effect of nationality and fixed effects of treatment and gender with adaptive prior for traceplot
+nologcompletefinalmodel2N <- ulam(
+    alist(
+        gradordrop ~ dbinom( 1 , p ) ,
+        logit(p) <- a[nationality] + b[treatment] + c[gender] ,
+        b[treatment] ~ dnorm( 0 , 0.5 ),
+        c[gender] ~ dnorm( 0, 0.5),
+        a[nationality] ~ dnorm( a_bar , sigma_a ),
+        a_bar ~ dnorm( 0 , 1.5 ),
+        sigma_a ~ dexp(1)
+    ) , data=final_list , chains=4 , cores=4)
+```
+
+```{r}
+traceplot(nologcompletefinalmodel2N)
+```
+
+```{r}
+compare(simplefinalmodel1, simplefinalmodel2, completefinalmodel1, completefinalmodel1N, completefinalmodel2, completefinalmodel2N, func = WAIC)
+```
+
+## Findings and Analysis  
+
+The “simple” models simply evaluate the differences in graduation chances between varying levels of the treatment effect. Again, the treatment effect ranges from no parental exposure to higher education to both parents having exposure to higher education (lowest to highest values respectively). The “simple” models indicate the same findings between adaptive and set priors: students with no parental exposure to higher education are more likely to graduate than students with both parents exposed to higher education. Interestingly, students that have no parental exposure to higher education are roughly as likely to graduate as students with only maternal exposure to higher education. This trend remains intact for students with only paternal exposure to higher education and students that have two parents with exposure to higher education. The adaptive prior increases the odds of graduation for the latter conditions, whereas the former conditions remain consistent. There is solid convergence across all chains for both sets of priors. Lastly, each model has Rhat values for its parameters that are at, or very close, to 1, indicating solid statistical integrity and no excessive parameterization. 
+
+There is overall solid model integrity across both logistic and multilevel models. However, a WAIC model comparison positions the multilevel model with the academic major random effect and the adaptive prior (with exponential sigma) as the most precise model. A closer look at the data and diagnostics corroborates this claim. The convergence for this particular model is more complete than the other models. Furthermore, while the addition of nationality as another parameter naturally boosts the overall predictive power of the ensuing modeling (more parameters, better predictive power), nationality is not a particularly useful cluster within our data. The vast majority of the data is associated with a single nationality: “Portuguese” (this suggests that the data originates from a higher education institution within Portugal). There is a far more diverse, and normal, distribution within the data when academic major is the cluster in question. Therefore, the conclusions within this analysis will draw from the findings of the “completefinalmodel2” model, which specifies academic major as the random effect with treatment and gender as fixed effects.  
+
+Matters become analytically interesting within the multilevel model results. The introduction of the fixed effect of gender and random effects dilutes the treatment results but leaves the overall premise intact. Treatment conditions 1 and 2 are still more likely to graduate than treatment conditions 3 and 4. However, the severity of the posterior means within treatment conditions pale in comparison to the posterior means within both the fixed effect of gender and the random effect of academic major. Gender alone is a particularly telling effect. Female students have far higher graduation chances than male students.  
+
+The most compelling parameter for predicting graduation rates is the academic major. While the treatment effect has a slight statistical effect with consistent trends across treatment categories, the most severe posterior means and unilateral confidence intervals appear for academic major parameters. For example, let us examine the highest posterior mean values. The top three posterior mean values are for parameters a[12], a[10], and a[5]. Each of these is an academic major, and they refer to tourism, social service, and communication design respectively. Conversely, the lowest posterior means are for parameters a[7], a[1], and a[16]. These are all also academic majors, and they refer to informatics engineering, biofuel production technologies, and basic education respectively. This model suggests that the highest odds of graduation are associated with the academic major of a student’s choice, with more traditionally “difficult” majors resulting in much higher chances of dropping out entirely. This however does not readily explain why majoring in “basic education” in Portugal induces such poor graduation chances.  
+
+```{r}
+plot(precis(completefinalmodel2, depth = 2))
+```
+
+## Conclusion  
+
+Parental exposure to higher education has an impact on a student’s chances of graduating. Students with parents with no exposure to higher education, or with only maternal exposure to higher education, are both more likely to graduate than students that have both parents with exposure to higher education or only paternal exposure to higher education. However, this effect is less pronounced and less significant than gender and academic major. Academic major is the most significant determinant for graduation, with more traditionally “difficult” majors resulting in severely diminished graduation chances. Adaptive priors produce more precise modeling power, but only marginally so when calculated on a WAIC basis.  
+
+
+## References
